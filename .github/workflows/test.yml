@@ -1,36 +1,86 @@
-# This is a basic workflow to help you get started with Actions
+name: Check Pull Requests
 
-name: CI
-
-# Controls when the workflow will run
 on:
-  # Triggers the workflow on push or pull request events but only for the "main" branch
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+  pull_request_target:
+    types:
+      - opened
+      - edited
+      - synchronize
+      - labeled
+      - unlabeled
+  merge_group:
 
-  # Allows you to run this workflow manually from the Actions tab
-  workflow_dispatch:
+permissions:
+  pull-requests: write
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-  # This workflow contains a single job called "build"
-  build:
-    # The type of runner that the job will run on
+  check-title:
     runs-on: ubuntu-latest
-
-    # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
-      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      - uses: actions/checkout@v4
+      - name: Check PR title
+        if: github.event_name == 'pull_request_target'
+        uses: amannn/action-semantic-pull-request@v5
+        id: check_pr_title
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Add comment indicating we require pull request titles to follow conventional commits specification
+      - uses: marocchino/sticky-pull-request-comment@v2
+        if: always() && (steps.check_pr_title.outputs.error_message != null)
+        with:
+          header: pr-title-lint-error
+          message: |
+            Thank you for opening this pull request!
 
-      # Runs a single command using the runners shell
-      - name: Run a one-line script
-        run: echo Hello, world!
+            We require pull request titles to follow the [Conventional Commits specification](https://www.conventionalcommits.org/en/v1.0.0/) and it looks like your proposed title needs to be adjusted.
 
-      # Runs a set of commands using the runners shell
-      - name: Run a multi-line script
+            Details:
+
+            > ${{ steps.check_pr_title.outputs.error_message }}
+
+      # Delete a previous comment when the issue has been resolved
+      - if: ${{ steps.check_pr_title.outputs.error_message == null }}
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: pr-title-lint-error
+          delete: true
+
+  check-breaking-change-label:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check breaking change label
+      id: check_breaking_change
+      run: |
+        pattern='^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\(\w+\))?!:'
+        # Check if pattern matches
+        if echo "${{ github.event.pull_request.title }}" | grep -qE "$pattern"; then
+          echo "Matched breaking change pattern"
+          echo "breaking_change=true" >> $GITHUB_OUTPUT
+        else
+          echo "Did not match breaking change pattern"
+          echo "breaking_change=false" >> $GITHUB_OUTPUT
+        fi
+    - name: Print Output
+      run: cat $GITHUB_OUTPUT
+    - name: Add label
+      if: steps.check_breaking_change.outputs.breaking_change == 'true'
+      uses: actions/github-script@v6
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          github.rest.issues.addLabels({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            labels: ['breaking change']
+          })
+
+  do-not-merge:
+    if: ${{ contains(github.event.*.labels.*.name, 'do not merge') }}
+    name: Prevent Merging
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for label
         run: |
-          echo Add other actions to build,
-          echo test, and deploy your project.
+          echo "Pull request is labeled as 'do not merge'"
+          echo "This workflow fails so that the pull request cannot be merged"
+          exit 1
